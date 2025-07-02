@@ -117,6 +117,30 @@ int? detectTappedNode(List<SankeyNode> nodes, Offset tapPos) {
   return null;
 }
 
+/// Determines if a tap hit a link and returns that [SankeyLink]; null otherwise.
+///
+/// Reconstructs each link’s Path the same way the painters do, then checks
+/// if the tap point lies within the path’s stroke bounds.
+SankeyLink? detectTappedLink(List<SankeyLink> links, Offset tapPos) {
+  for (var link in links) {
+    final source = link.source as SankeyNode;
+    final target = link.target as SankeyNode;
+
+    // Build the same cubic path
+    final path = Path()..moveTo(source.x1, link.y0);
+    final xMid = (source.x1 + target.x0) / 2;
+    path.cubicTo(xMid, link.y0, xMid, link.y1, target.x0, link.y1);
+
+    // Inflate the path’s bounds by half the stroke width for hit‐tolerance
+    final hitBounds = path.getBounds().inflate(link.width / 2);
+    if (!hitBounds.contains(tapPos)) continue;
+
+    // Lightweight acceptance: bounds test is sufficient for thin strokes.
+    return link;
+  }
+  return null;
+}
+
 /// Combines nodes and links with layout logic
 ///
 /// The [SankeyDataSet] class holds the list of nodes and links, and provides a
@@ -157,17 +181,14 @@ InteractiveSankeyPainter buildInteractiveSankeyPainter({
 
 /// A widget that wraps an interactive Sankey diagram
 ///
-/// The [SankeyDiagramWidget] integrates gesture detection for tapping nodes and
-/// renders the diagram using a [CustomPaint] widget. It takes a [SankeyDataSet] as
-/// its data source, a node colors map, and an optional [selectedNodeId] along with a
-/// callback [onNodeTap] which is called when a node is tapped
-///
-/// The [size] parameter specifies the drawing area for the diagram
+/// The [SankeyDiagramWidget] integrates gesture detection for tapping nodes and links,
+/// renders the diagram using a [CustomPaint], and exposes callbacks when a node or link is tapped.
 class SankeyDiagramWidget extends StatelessWidget {
   final SankeyDataSet data;
   final Map<String, Color> nodeColors;
   final int? selectedNodeId;
   final Function(int?)? onNodeTap;
+  final Function(SankeyLink)? onLinkTap;
   final Size size;
   final bool showLabels;
 
@@ -177,6 +198,7 @@ class SankeyDiagramWidget extends StatelessWidget {
     required this.nodeColors,
     this.selectedNodeId,
     this.onNodeTap,
+    this.onLinkTap,
     this.size = const Size(1000, 600),
     this.showLabels = true,
   }) : super(key: key);
@@ -185,8 +207,22 @@ class SankeyDiagramWidget extends StatelessWidget {
   Widget build(BuildContext context) {
     return GestureDetector(
       onTapDown: (details) {
-        final tapped = detectTappedNode(data.nodes, details.localPosition);
-        if (onNodeTap != null) onNodeTap!(tapped);
+        final local = details.localPosition;
+
+        // 1) Try link first
+        if (onLinkTap != null) {
+          final link = detectTappedLink(data.links, local);
+          if (link != null) {
+            onLinkTap!(link);
+            return;
+          }
+        }
+
+        // 2) Fallback to node
+        final nodeId = detectTappedNode(data.nodes, local);
+        if (onNodeTap != null) {
+          onNodeTap!(nodeId);
+        }
       },
       child: CustomPaint(
         size: size,

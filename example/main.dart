@@ -5,17 +5,10 @@ import 'package:sankey_flutter/sankey_helpers.dart';
 import 'package:sankey_flutter/sankey_link.dart';
 import 'package:sankey_flutter/sankey_node.dart';
 
-/// The entry point of the Sankey Complex Example application
-///
-/// This function initializes the app by running [SankeyComplexExampleApp]
 void main() {
   runApp(SankeyComplexExampleApp());
 }
 
-/// A stateless widget that defines the overall structure of the Sankey Diagram Example App
-///
-/// It sets the app title, theme, and uses a [Scaffold] to provide an app bar and a body
-/// that renders the Sankey diagram
 class SankeyComplexExampleApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -29,20 +22,12 @@ class SankeyComplexExampleApp extends StatelessWidget {
   }
 }
 
-/// A stateful widget that manages the interactive Sankey diagram
-///
-/// This widget builds a Sankey diagram using data defined in the [initState] method
-/// It also handles user tap interactions to select nodes
 class SankeyComplexDiagramWidget extends StatefulWidget {
   @override
   _SankeyComplexDiagramWidgetState createState() =>
       _SankeyComplexDiagramWidgetState();
 }
 
-/// The state class for [SankeyComplexDiagramWidget]
-///
-/// It defines the nodes, links, node colors, and handles layout computation and tap interactions
-/// Changes in state trigger a repaint to reflect node selection and updates to the diagram
 class _SankeyComplexDiagramWidgetState
     extends State<SankeyComplexDiagramWidget> {
   late List<SankeyNode> nodes;
@@ -55,7 +40,6 @@ class _SankeyComplexDiagramWidgetState
   void initState() {
     super.initState();
 
-    // Define the list of nodes across multiple layers
     nodes = [
       SankeyNode(id: 0, label: 'Salary'),
       SankeyNode(id: 1, label: 'Freelance'),
@@ -74,7 +58,6 @@ class _SankeyComplexDiagramWidgetState
       SankeyNode(id: 12, label: 'Donations'),
     ];
 
-    // Define the links between nodes with specified flow values
     links = [
       SankeyLink(source: nodes[0], target: nodes[3], value: 70),
       SankeyLink(source: nodes[1], target: nodes[3], value: 30),
@@ -92,13 +75,8 @@ class _SankeyComplexDiagramWidgetState
       SankeyLink(source: nodes[14], target: nodes[12], value: 1),
     ];
 
-    // Automatically generate a color map for the nodes using their labels
     nodeColors = generateDefaultNodeColorMap(nodes);
-
-    // Combine the nodes and links into a data set
     sankeyDataSet = SankeyDataSet(nodes: nodes, links: links);
-
-    // Generate the layout using a helper that configures the layout engine
     final sankey = generateSankeyLayout(
       width: 1000,
       height: 600,
@@ -108,14 +86,88 @@ class _SankeyComplexDiagramWidgetState
     sankeyDataSet.layout(sankey);
   }
 
-  /// Callback for handling tap events on nodes
-  ///
-  /// When a node is tapped, its [id] is stored in [selectedNodeId],
-  /// triggering a rebuild that highlights the node
+  /// Walks fully upstream & downstream, choosing the highest-value branch
+  List<SankeyLink> _buildFullChain(SankeyLink tapped) {
+    final chain = <SankeyLink>[];
+
+    // 1) Go upstream: from tapped.source back to any true source
+    var current = tapped;
+    while (true) {
+      final incoming = (current.source as SankeyNode).targetLinks;
+      if (incoming.isEmpty) break;
+      // pick the link with the largest value
+      final bestUp = incoming.reduce((a, b) => a.value >= b.value ? a : b);
+      chain.insert(0, bestUp);
+      current = bestUp;
+    }
+
+    // 2) Add the tapped link itself
+    chain.add(tapped);
+
+    // 3) Go downstream: from tapped.target forward to any true sink
+    current = tapped;
+    while (true) {
+      final outgoing = (current.target as SankeyNode).sourceLinks;
+      if (outgoing.isEmpty) break;
+      // pick the link with the largest value
+      final bestDown = outgoing.reduce((a, b) => a.value >= b.value ? a : b);
+      chain.add(bestDown);
+      current = bestDown;
+    }
+
+    return chain;
+  }
+
+  /// Shows all links in and out of a node.
   void _handleNodeTap(int? nodeId) {
-    setState(() {
-      selectedNodeId = nodeId;
+    setState(() => selectedNodeId = nodeId);
+
+    if (nodeId == null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Tapped outside any node')));
+      return;
+    }
+
+    final node = nodes.firstWhere((n) => n.id == nodeId);
+    final parts = <String>[];
+    node.sourceLinks.forEach((l) {
+      parts.add('→ ${(l.target as SankeyNode).label} (${l.value})');
     });
+    node.targetLinks.forEach((l) {
+      parts.add('← ${(l.source as SankeyNode).label} (${l.value})');
+    });
+
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('Node: ${node.label}'),
+        content: Text(parts.isEmpty ? 'No links' : parts.join('\n')),
+      ),
+    );
+  }
+
+  /// Shows the entire chain when a link is tapped.
+  void _handleLinkTap(SankeyLink link) {
+    final chain = _buildFullChain(link);
+
+    // The very first node label (upstream-most source):
+    final firstSource = (chain.first.source as SankeyNode).label ?? '<unknown>';
+
+    // Then each link’s target + its value
+    final downstreamLabels = chain
+        .map((l) => '${(l.target as SankeyNode).label} (${l.value})')
+        .toList();
+
+    final parts = <String>[firstSource] + downstreamLabels;
+    final message = parts.join(' → ');
+
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('Link path'),
+        content: Text(message),
+      ),
+    );
   }
 
   @override
@@ -127,8 +179,9 @@ class _SankeyComplexDiagramWidgetState
           nodeColors: nodeColors,
           selectedNodeId: selectedNodeId,
           onNodeTap: _handleNodeTap,
+          onLinkTap: _handleLinkTap,
           size: const Size(1000, 600),
-          showLabels: false,
+          showLabels: true,
         ),
       ),
     );
